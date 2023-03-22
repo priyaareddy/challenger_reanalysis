@@ -1,0 +1,388 @@
+---
+title: "Investigating the 1986 Space Shuttle Challenger Accident"
+author: "Jonathan Phan, Priya Reddy, Spencer Zezulka"
+output: html_document
+fontsize: 11pt
+geometry: margin=1in
+header-includes:   
+  - \usepackage{float}
+---
+
+\newpage
+
+```{r, loading-all-libraries, echo=FALSE, warning=FALSE, include=FALSE}
+# Load libraries
+# Insert the function to *tidy up* the code when they are printed out
+if(!"knitr"%in%rownames(installed.packages())) {install.packages("knitr")}
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+if(!"tidyverse"%in%rownames(installed.packages())) {install.packages("tidyverse")}
+library(tidyverse)
+## provide useful functions to facilitate the application and interpretation of regression analysis.
+if(!"car"%in%rownames(installed.packages())) {install.packages("car")}
+library(car)
+## provides many functions useful for data analysis, high-level graphics, utility operations like describe()
+if(!"Hmisc"%in%rownames(installed.packages())) {install.packages("Hmisc")}
+library(Hmisc)
+## to work with "grid" graphics
+if(!"gridExtra"%in%rownames(installed.packages())) {install.packages("gridExtra")}
+library(gridExtra)
+## provides function to for Visualization techniques, summary and inference procedures such as assocstats()
+if(!"vcd"%in%rownames(installed.packages())) {install.packages("vcd")}
+library(vcd)
+## for multinomial log-linear models.
+if(!"nnet"%in%rownames(installed.packages())) {install.packages("nnet")}
+library(nnet)
+## To generate regression results tables and plots
+if(!"finalfit"%in%rownames(installed.packages())) {install.packages("finalfit")}
+library(finalfit)
+## To produce LaTeX code, HTML/CSS code and ASCII text for well-formatted tables
+if(!"stargazer"%in%rownames(installed.packages())) {install.packages("stargazer")}
+library(stargazer)
+## To produce confidence intervals later
+if(!"mcprofile"%in%rownames(installed.packages())) {install.packages("mcprofile")}
+library(mcprofile)
+
+```
+
+\newpage
+
+```{=tex}
+\begin{abstract} 
+The \textit{Challenger} disaster of 1986 was caused by the failure of one of the shuttle’s O-rings. This report reviews the validity of the hypothesis that O-ring failure is affected by temperature, and the accompanying analysis thereof from \textit{Dalal et al., 1989}. An exploratory analysis of O-ring stress data derived from 23 preaccident shuttle launches is offered and accompanied by a probabilistic estimate of at least one of the 6 O-rings failing in the range of possible temperatures, as given by a logistic regression of failure on temperature. A comparison is made with a logistic model which also includes pressure, concluding that a model without the pressure term is more appropriate for predicting failure and further implying that temperature is the primary metric for assessing failure risk. A 90 percent confidence interval for at least one O-ring failure is assembled by means of a parametric bootstrap on the data, resulting in a probability of <insert CI here>. The report also juxtaposes the logistic model with an alternative linear model, and explains why the linear model cannot appropriately assess the temperature-failure relation. The report concludes that low temperature indeed significantly increases the likelihood of O-ring failure.
+\end{abstract}
+```
+# Introduction
+
+## Research question: Predict O-ring performance under the Challenger launch conditions and assess Challenger Report analysis on the effects of temperature on O-ring performance.
+
+# Data
+
+## Description
+
+The data that we are working with is from is from the 23 pre-accident Challenger launches. The data collected includes information on the flight number, temperature (F), pressure (PSI), number of O-rings that failed, and the total number of O-rings on the flight. Each flight had 6 O-rings and thus could have had between 0 and 6 O-ring failures. To better understand the effect the feature of the data set (specifically temperature) had on the O-ring failures we are using a logistic regression model to estimate the probability that an O-ring will fail. In order to use this model we must assume the independece of each O-ring for each launch. The assumption of independence for each O-ring is necessary because logistic regression assumes that each trial (flight in this instance) is independent from each other. Logistic regression also uses the binomial distribution to model the probability success and/or failure. Some potential violations of this assumption of independence is that the failure of one O-ring may be due to another O-ring failing. There may also be other dependency problems, perhaps relating to the fact that each launch's O-rings may have gone through the same installation or manufacturing processes.
+
+## Key Features
+
+Our variables of interest for this analysis are temperature and pressure.
+
+```{r, warning = FALSE, echo=FALSE, results='asis'}
+data <- read.csv(file = '~/Desktop/Spring 2023/271/spring_23_central-master/Labs/Lab_1/data/raw/challenger.csv')
+stargazer(data[,-c(1,5)], header=FALSE, type='latex',title = "Table 1",table.placement = "H")
+```
+
+Looking at a Table 1, we can see that there are no missing values. We also see that for the given pre-accident launches the max number of O-ring failures was 2. There is no top or bottom coding.
+
+```{r}
+
+#Distribtion of temp 
+O.ring.temp <- data %>%
+  ggplot(aes(x = Temp)) +
+  geom_density(aes(y  = ..density..))+
+  xlab("Temperature (F)")+
+  ylab("Density")+
+  ggtitle("1. Distribution of Temperatures")
+
+#Distribtion of pressure 
+O.ring.pressure <- data %>%
+  ggplot(aes(x = Pressure)) +
+  geom_density(aes(y  = ..density..))+
+  xlab("Pressure (PSI)")+
+  ylab("Density")+
+  ggtitle("2. Distribution of Pressures")
+
+#Distribution of pressure grouped by O.ring
+O.ring.pressure.fail <- data %>%
+  ggplot(aes(x = Pressure)) + 
+  geom_density(aes(y  = ..density.., color = factor(O.ring), fill = factor(O.ring)), alpha = 0.2)+
+  xlab("Pressure (PSI)")+
+  ylab("Density")+
+  ggtitle("3. Pressure by # Failed O.Rings")
+
+#Number of O.ring failures Across Different Temperatures
+O.rings <- data %>% 
+  ggplot(aes(x = Temp, y= factor(O.ring))) + 
+  geom_point(aes(color=factor(O.ring)))+
+  theme(legend.position = "none")+
+  ylab("Num Failed O-Rings ")+
+  xlab("Temp (F)")+
+  ggtitle("4. Number of O.ring failures by Temp")
+
+grid.arrange(O.ring.temp, O.ring.pressure,O.ring.pressure.fail,O.rings, ncol=2, nrow=2)
+```
+
+Based on the plots above we can see in plot 1 that the distribution of the temperatures of the launches is roughly normal and in plot 2 that the distribution of the pressures is bi-modal. Plot 2 indicates that most launches occur at a higher pressure, but the plot 3, the distribution of pressures by number of failures, shows that O-ring failures occur both at ends of the pressure range. Further statistical testing later in this paper will show this lack of significance more clearly. Plot 4, the scatter plot of temperature vs the amount of failed O-rings shows that there are only 2 instances where 2 O-rings have failed in a given launch. The lack of more data points where 2 O-rings have failed may affect our later analysis. But overall, the fourth plot seems to show a negative relationship between temperature and number of O-ring failures, it appears that fewer O-ring failures occur at higher temperatures.
+
+# Analysis
+
+## Reproducing Previous Analysis
+
+To evaluate the previous Challenger analysis, we first begin by constructing our logistic regression model using `Temp` and `Pressure` as our explanatory variables. Our initial model thus is in the form $$logit(\hat{\pi}) = \beta_{0} +\beta_{1}(temperature)+\beta_{2}(pressure) $$
+
+We then conduct likelihood ratio tests, using the Anova command, to determine the significance of the inclusion of each of the explanatory variables.
+
+```{r warning=FALSE, results='asis'}
+mod.fit <- glm(O.ring/Number ~ Temp + Pressure, data = data, family = binomial, 
+              weights=Number)
+mod.temp <- glm(O.ring/Number ~ Temp, data = data, family = binomial(link = "logit"), 
+              weights=Number)
+stargazer(mod.fit, mod.temp, header=FALSE, type='latex',
+          title = "Table 2",
+          column.labels = c("w/ Pressure", "w/o Pressure"),
+          covariate.labels = c("Temperature (F)", "Pressure (PSI)"),
+          dep.var.caption  = "",
+          dep.var.labels = "O-ring Failure",
+          table.placement = "H")
+```
+
+```{r}
+Anova(mod.fit, method = "LR")
+```
+
+Our model with both explanatory variables was found to be:$$logit(\hat{\pi}) = 2.52019 -0.098297(temperature)+0.008484(pressure)$$
+
+Looking at table 2 we can see that only the inclusion of `Temp` appears to be significant (p\<0.5). By contrast, the inclusion of `Pressure` is not significant at any level. This is in-line with what the authors found in their original analysis. The model coefficient for `Temp` shows us that for each increase in temperature by 1 degree, the odds that at least one 0-ring fails change by $e^{-0.098}$ or 0.9066 times. It might be more useful to interpret this to say that as the temperature decreases the probability of O-ring failure increases. `Pressure` was also found to be insignificant when we ran an Anova Ch-Squared test on our model. Even though it is insignificant, our model coefficients do shows that as pressure increases there is a marginal increase in chance of failure. In table 2 above Note that when removing `Pressure` from our model, `Temp` becomes more significant, going from a p-value of 0.0285 to 0.014 and the AIC value of the model decreases.
+
+Based on these results, the authors' decision to remove `Pressure` from their model is valid. We have chosen to remove `Pressure` as an explanatory variable because it's inclusion in our model is not significant. However, to get a clear understanding of the O-ring failure, furthering testing would be helpful. It is possible that the pressure could contribute to the erosion or the blow-by affecting O-rings. It is also possible that our data-set does not include conditions in which pressure was abnormal enough to affect the O-ring failure. Lastly, in their initial analysis the authors assume a linear relationship between pressure and the O-ring failure and that there is no interaction between `Temp` and `Pressure`. `Pressure` may also not be significant as a linear term, but may be significant after a transformation or after being included as an interaction term.
+
+## Confidence Intervals
+
+Considering our analysis above validates the authors' decision to drop `Pressure` from their model, we move forward with creating the simplified logistic regression model of the form $logit(\hat{\pi}) = \beta_{0} +\beta_{1}(temperature)$.
+
+As seen in table 2, this simplified model is: $logit(\hat{\pi}) = 5.08498-0.11560(temperature)$. We can see that the coefficient for temperature has decreased in comparison to our previous model, so now for each increase in temperature by 1 degree, the odds that at least one 0 ring fails change by $e^{-0.11560}$ or 0.8908 times. In addition, we can see that the AIC value for the simplified model is smaller than the AIC for our more complex model, which further validates our decision to drop the `Pressure` term.
+
+In order to check for any possible non-linear relationship between `Temp` and the O-ring failures, we also construct a quadratic model of the form: $logit(\hat{\pi}) = \beta_{0} +\beta_{1}(temperature)+\beta_{2}(temperature^2)$.
+
+```{r,  warning = FALSE,   results='asis'}
+mod.temp.quad <- glm(O.ring/Number ~ Temp + I(Temp^2), data = data, family = binomial(link = "logit"), 
+              weights=Number)
+stargazer(mod.temp, mod.temp.quad, header=FALSE, type='latex',
+          title = "Table 3",
+          column.labels = c("Linear-Logistic", "Quadratic-Logistic"),
+          covariate.labels = c("Temperature (F)", "I(Temperature**2)"),
+          dep.var.caption  = "",
+          dep.var.labels = "O-ring Failure",
+          table.placement = "H",
+          no.space = TRUE)
+```
+
+```{r}
+Anova(mod.temp.quad, method = "LR")
+```
+
+As shown in Table 3, when we construct our model it appears that the `I(Temp^2)` term is statistically insignificant. We furthered confirmed this by conducting an Anova Chi-Squared test, which showed that the `I(Temp^2)` term has a p-value of 0.467 and is thus insignificant. In addition to these metrics we can also see that the AIC value of the non-quadratic model is smaller than that of the quadratic model, indicating that the simpler model is better. As a result we can determine that the quadratic term is not needed in our model, and we can move forward in our analysis with the simplified temperature only model.
+
+Using this simplified model we can construct two plots to visualize the relationship between $\hat{\pi}$ and `Temp`.
+
+```{r,  }
+newdf <- data.frame(Temp = seq(from = 31, to = 81, by = 1)) #inputs
+pi.hat <- predict(mod.temp, newdata = newdf, type = "response", se.fit = TRUE) #need reponse to have predictions after logit
+
+
+ci.int <- function(newdata, mod.fit.obj, alpha) { #confidence interval formula for plotting
+linear.pred <- predict(object = mod.fit.obj, newdata = newdata,
+type = "link", se = TRUE)
+CI.lin.pred.lower <- linear.pred$fit - qnorm(p = 1 - alpha/2) *
+linear.pred$se
+CI.lin.pred.upper <- linear.pred$fit + qnorm(p = 1 - alpha/2) *
+linear.pred$se
+CI.pi.lower <- exp(CI.lin.pred.lower)/(1 + exp(CI.lin.pred.lower))
+CI.pi.upper <- exp(CI.lin.pred.upper)/(1 + exp(CI.lin.pred.upper))
+list(lower = CI.pi.lower, upper = CI.pi.upper)
+}
+par(mfrow=c(1,2))
+#Plot for estimated probability of failure vs temperature
+plot(newdf$Temp, pi.hat$fit, 
+     ylim = range(c(0,1)),
+     xlab = "Temperature", ylab = "Pi_Hat", 
+     main = "Pi_Hat vs. Temperature", 
+     type = 'l', 
+     col = 'black', 
+     lwd = 2)
+
+curve(expr = ci.int(newdata = data.frame(Temp = x), mod.fit.obj = mod.temp, alpha = 0.05)$lower, 
+      col = "blue", 
+      lty = "dotdash", 
+      add = TRUE, 
+      xlim = c(31, 81))
+
+curve(expr = ci.int(newdata = data.frame(Temp = x), mod.fit.obj = mod.temp, alpha = 0.05)$upper, 
+      col = "blue", 
+      lty = "dotdash", 
+      add = TRUE, 
+      xlim = c(31, 81))
+
+legend("topright", legend = c("Logistic regression model", "95% individual C.I."), 
+       lty = c("solid", "dotdash"), 
+       col = c("black", "blue"), 
+       bty = "n",
+       cex = 0.65)
+
+#expected number of failures vs. Temp
+plot(newdf$Temp, pi.hat$fit * 6, 
+     ylim = range(c(0,6)),
+     xlab = "Temperature", 
+     ylab = "Pred # of O-ring fails", 
+     main = "Expected # O-ring Fails vs. Temp", 
+     type = 'l', 
+     col = 'black', 
+     lwd = 2)
+curve(expr = (ci.int(newdata = data.frame(Temp = x), mod.fit.obj = mod.temp, alpha = 0.05)$lower)*6, 
+      col = "blue", 
+      lty = "dotdash", 
+      add = TRUE, 
+      xlim = c(31, 81))
+
+curve(expr = (ci.int(newdata = data.frame(Temp = x), mod.fit.obj = mod.temp, alpha = 0.05)$upper)*6, 
+      col = "blue", 
+      lty = "dotdash", 
+      add = TRUE, 
+      xlim = c(31, 81))
+legend("topright", legend = c("Logistic regression model", "95% individual C.I."), 
+       lty = c("solid", "dotdash"), 
+       col = c("black", "blue"), 
+       bty = "n",
+       cex = 0.65)
+```
+
+From the plots above we can see that the probability of O-ring failure increases as temperature decreases. However, we can also see that the confidence interval bands are much wider at lower temperatures than at higher temperatures. This shift occurs at around 60°F. This is likely because we had very few low temperature observations in our sample, 20 of the 23 launches in our sample occurred at temperatures greater than 60°F.
+
+We know that the temperature was 31°F at launch for the Challenger in 1986. When we use our model to estimate the probability of an O-ring failure using this temperature,we find that there is a predicted 82% probability of O-ring failure, with a Wald 95% confidence interval of 15.96% to 99.06%. This is a very large CI band, which in part maybe due to the fact that the Wald CI does not work well with samples of less than 40, and our sample only has 23 observations. However, when we re-calculated the CI using the Profile Likelihood method to account for this we still found the confidence band to be quite large (14.18% to 99.05%).
+
+As mentioned before this is likely due to the fact that our sample has very few data points for low temperatures. In addition, our sample has no data for temperatures lower than 53°F and we are estimating the log-likelihood of O-ring failure at 31°F. As a result, we are simply assuming that the logistic regression model we have calculated holds at this lower temperature, but it is possible that our assumption of the linear relationship between `Temp` and the log-likelihood of O-ring failure is not sound. Even though we conducted a statistical test to rule out a quadratic relationship between `Temp` and pi_hat, it could be that within the range of our data-set any non-linear relationship is undetectable, but at 31°F (28° below our lowest observation) it is.
+
+```{r}
+prediction <- exp(mod.temp$coefficients[1] + mod.temp$coefficients[2]*31)/ (1 + exp(mod.temp$coefficients[1] + mod.temp$coefficients[2]*31))
+print(prediction)
+
+#Wald CI
+ci.int(newdata = data.frame(Temp = 31), mod.fit.obj = mod.temp, alpha = 0.05)
+
+
+#Profile
+K <- matrix(data = c(1,31), nrow = 1, ncol = 2)
+mod.temp.combo <- mcprofile(object = mod.temp, CM = K)
+ci.logit.profile <- confint(object = mod.temp.combo, level = 0.95)
+prof_ci <- exp(ci.logit.profile$confint)/(1 + exp(ci.logit.profile$confint))
+prof_ci
+```
+
+## Bootstrap Confidence Intervals
+
+As seen in the previous section, the confidence band for the lower temperature estimates is extremely wide. To better understand the variability in our predictions at lower temperatures we can use a bootstrap method. To create a parametric bootstrap and produce a resulting 90% confidence interval, we first generated 1000 samples (n=23) from the original data set with replacement. Then, for each of these 1000 samples, we generated a model of the form $logit(\hat{\pi}) = \beta_{0} +\beta_{1}(temperature)$. The for each of these 1000 models we predicted $\hat{\pi}$ at each integer temperature between 10° and 100° Fahrenheit. Using these predicted values we were able to compute the 0.05 and 0.95 quantile estimation at each temperature to construct our 90% confidence bands. For our estimation line we computed the mean estimation at each temperature.
+
+```{r, warning=FALSE}
+simulations <- function(data, R, temp){
+  results <- data.frame(temperature = numeric(0), estimates = numeric(0), lower_ci = numeric(0), upper_ci = numeric(0))
+  models <- list()
+    for (i in 1:R){
+      # Simulate dataset with only necessary variables and with replacement
+      sim_data <- data[sample(nrow(data), replace = TRUE), -c(1,3)]
+      # Estimate model for each dataset
+      model <- glm(O.ring/Number ~ Temp, data = sim_data, 
+                   family = binomial(link = "logit"),
+              weights=Number)
+      models[[i]] <- model
+    } 
+    
+  
+  for (t in temp){
+    estimates <- list()
+    j = 1
+    for (model in models){
+      estimation <- predict(model, newdata = data.frame(Temp = t), 
+                            type = "response", se.fit = TRUE)$fit
+      estimates[[j]] <- estimation
+      j <- j + 1
+    }
+    mean_estimate <- mean(unlist(estimates))
+    lower_ci <- quantile(unlist(estimates), 0.05)
+    upper_ci <- quantile(unlist(estimates), 0.95)
+    
+    results <- rbind(results, data.frame(temperature = t, estimates = mean_estimate,
+                                         lower_ci = lower_ci, upper_ci = upper_ci))
+  }
+  return(results)
+}
+
+simulations <- simulations(data, 1000, seq(10, 100, by = 1))
+```
+
+```{r}
+boot_pihat<- ggplot(data = simulations, aes(x = temperature)) + 
+  geom_line(aes(y = lower_ci, color = "Lower Limit"), linetype =  2, size = 0.5) + 
+  geom_line(aes(y = upper_ci, color = "Upper Limit"), linetype =  2, size = 0.5) + 
+  geom_ribbon(aes(ymin = lower_ci, ymax = upper_ci), fill = "lightblue", alpha = .2) + 
+  geom_line(aes(y = estimates, color = "Estimates"))+
+  ggtitle("Pi_hat Bootstrap with 90% C.I.") +
+  xlab("Temperature") + 
+  ylab("Pi_hat") +
+  theme_classic()+
+  theme(legend.position="bottom", legend.box = "horizontal",legend.title = element_blank())
+
+boot_expec <- ggplot(data = simulations, aes(x = temperature)) + 
+  geom_line(aes(y = lower_ci*6, color = "Lower Limit"), linetype =  2, size = 0.5) + 
+  geom_line(aes(y = upper_ci*6, color = "Upper Limit"), linetype =  2, size = 0.5) + 
+  geom_ribbon(aes(ymin = lower_ci*6, ymax = upper_ci*6), fill = "lightblue", alpha = .2) + 
+  geom_line(aes(y = estimates*6, color = "Estimates"))+
+  ggtitle("Expected Num Bootstrap with 90% C.I.") +
+  xlab("Temperature") + 
+  ylab("Expected Num of O-ring Failure") +
+  theme_classic()+
+  theme(legend.position="bottom", legend.box = "horizontal",legend.title = element_blank())
+
+grid.arrange(boot_pihat, boot_expec, ncol=2, nrow=1)
+
+```
+
+The plots above showcase the results of the bootstrap: it is clear that as temperature increases, the probability of having 6 of the O-ring failing decreases. It is also worth noting that the confidence interval is still much wider at lower temperatures (\<65°F)than higher temperatures. As mentioned above, this is most likely due to the original data set having only a few observations at lower temperatures, leading to greater uncertainty for estimates at these temperatures.
+
+## Alternative Specification
+
+As a final analysis of our model, we decided to compare it to a linear regression model with the same explanatory variables, this model takes the form $P(Oring.failures) = \beta_{0} +\beta_{1}(temperature)$.
+
+```{r  results='asis', warning=FALSE}
+mod.linear <- lm(formula = O.ring/Number ~ Temp, data = data, weights = Number)
+stargazer(mod.linear, header=FALSE, type='latex',
+          title = "Table 4",
+          covariate.labels = c("Temperature (F)"),
+          column.labels = c("Linear"),
+          dep.var.caption  = "",
+          dep.var.labels = "O-ring Failure",
+          no.space = TRUE)
+
+par(mfrow=c(2,2), mar=c(4.1,3.1,2.1,0.1))
+plot(mod.linear, which = c(1,2,3))
+```
+
+The model we generated takes the form $P(Oring.failures) = 0.616402 -0.007923(temperature)$, as seen in table 4. According to this model, at a temperature of 31°F 37% of the O-rings would fail. 
+
+
+Following this interpretation we can see one immediate problem with this the assumption that the model of the relationship between `Temp` and the probability of O-ring failure is linear. The probability of failure is by definition bounded by [0,1], so a linear model, which is unbounded is not an appropriate model choice. We can see this since, with our calculated model, at temperatures greater than 77.97°F we get a predicted probability of less than 0, and at temperatures less than -48.415°F we get a predicted probability of failure of greater than 1.
+
+In addition to this, when we evaluate the other assumptions needed to create a linear regression model through plotting the residuals, we can see that several other assumptions are violated. First, the samples used to create the model must be IID, this assumption is possibly violated since the O-rings are not necessary independent as each set of 6 O-rings on a launch are subjected to the same conditions and the failure of 1 O-ring might influence the state of the other O-rings. In addition when we plotted the residuals vs fitted values plot for the model we can see that the assumption of zero-conditional mean of residuals is violated, if the assumption were met we would see a linear relationship between the two, but from the plot we can see the non-linear relationship. When we look at the Scale-Location plot we can also see that the assumption of the homoskedasticity of the errors is also violated. The plotted residuals are not equally spread across the range of predictors. Lastly, from the Q-Q plot we can see that our model has a relatively normal distribution of its residuals, but that it is not as normal towards the upper quantiles, with a larger sample we may have been able to assume the Central Limit Theorem but with such a small sample we unable to do so with confidence. The only assumption that holds true is that of no perfect co-linearity. Since our model only includes one predictors, we know that there is no co-linearity.
+
+We can also see that the model does not do a good job of explaining the variation in the data as seen by the low R^2 (0.2) in table 4. Based on these violations of the assumptions for creating a linear regression model, it appears that the the logistic regression model is a more appropriate model choice for this scenario. 
+
+# Conclusions
+
+```{r }
+beta.hat <- mod.temp$coefficients
+temperature <- seq(from = 30, to= 80, by = 10)
+K <- cbind(1, temperature)
+linear.combo <- mcprofile(object = mod.temp, CM = K)
+ci.log.OR <- confint(object = linear.combo, level = 0.95, adjust = 'none')
+data.frame(temperature, OR.hat = round(1/exp(ci.log.OR$estimate), 2), 
+           OR.low = round(1/exp(ci.log.OR$confint$upper), 2), OR.up = round(1/exp(ci.log.OR$confint$lower), 2))
+
+```
+
+```{r }
+beta.ci<-confint(object = mod.temp, parm = "Temp", level = 0.95)
+rev(exp(-10*beta.ci))  # Invert C.I. for OR with c = 10, ignore limit labels
+exp(-10*mod.temp$coefficients[2]) #OR with -10 tempreature
+```
+
+Our final model found that for every 1 degree increase in temperature the probability of O-ring failure decreases by 11%. Another way of looking at these results is that for a 10 degree decrease in the temperature the estimated odds that an o-ring fails changes by 3.177 times, with a 95% Confidence Interval the odds of an O-ring failure change between 1.277 and 8.35 times for every 10 unit decrease in temperature.
+
+These results confirm what the authors intial analysis founds, that at lower temperatures there is a higher likelihood of O-ring failure. Based on these results, it is likely that the low temperatures the day of the challenger launch contributed to the ultimately catastrophic O-ring failures.
